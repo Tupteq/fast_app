@@ -26,8 +26,6 @@ generated execute-api endpoint is disabled, so the custom domain is the only way
 import os
 import pathlib
 import re
-import shutil
-import subprocess
 import urllib.parse
 
 import aws_cdk
@@ -40,61 +38,13 @@ import aws_cdk.aws_route53 as route53
 import aws_cdk.aws_route53_targets as route53_targets
 import aws_cdk.aws_s3 as s3
 import constructs
+import uv_function
 
 ROOT = pathlib.Path(__file__).parent.parent
-BUILD_DIR = ROOT / "build"
+SOURCE = ROOT / "fast_app"
 
 RUNTIME = lambda_.Runtime.PYTHON_3_14
 ARCHITECTURE = lambda_.Architecture.ARM_64
-# Wheel platform tag matching ARCHITECTURE; update both together.
-PLATFORM = "aarch64-manylinux2014"
-
-
-def build() -> pathlib.Path:
-    """Installs locked runtime deps plus the app into BUILD_DIR, and returns it.
-
-    Runs on every synth so the packaged asset cannot drift from the source.
-    """
-    # ponytail: synth has a side effect (writes BUILD_DIR) and shells out to uv.
-    # If that ever hurts (offline CI, synth-only runs), move this into CDK's
-    # ILocalBundling so CDK owns the caching.
-    shutil.rmtree(BUILD_DIR, ignore_errors=True)
-    requirements = subprocess.run(
-        [
-            "uv", "export",
-            "--no-dev",
-            "--locked",  # Fail if uv.lock is stale; --frozen would silently package it.
-            "--no-emit-project",
-            "--no-hashes",
-            "--color", "never",  # npx sets FORCE_COLOR; ANSI codes break `-r -` below.
-        ],
-        cwd=ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    ).stdout
-    subprocess.run(
-        [
-            "uv", "pip", "install",
-            "--target", str(BUILD_DIR),
-            "--python-platform", PLATFORM,
-            "--python-version", RUNTIME.name.removeprefix("python"),
-            "--no-installer-metadata",
-            "-r", "-",
-        ],
-        cwd=ROOT,
-        check=True,
-        input=requirements,
-        text=True,
-    )
-    # Entry-point scripts carry this machine's absolute venv path in their shebang,
-    # which makes the asset hash differ between machines. Lambda never runs them.
-    shutil.rmtree(BUILD_DIR / "bin", ignore_errors=True)
-    # Skip __pycache__: .pyc files embed source mtimes and would churn the asset hash.
-    shutil.copytree(
-        ROOT / "fast_app", BUILD_DIR / "fast_app", ignore=shutil.ignore_patterns("__pycache__")
-    )
-    return BUILD_DIR
 
 
 def parameter(name: str) -> str:
@@ -166,13 +116,14 @@ class FastAppStack(aws_cdk.Stack):
     ) -> None:
         super().__init__(scope, construct_id, **kwargs)
 
-        function = lambda_.Function(
+        function = uv_function.UvFunction(
             self,
             "Function",
+            project=ROOT,
+            source=SOURCE,
             runtime=RUNTIME,
             architecture=ARCHITECTURE,
             handler="fast_app.main.handler",
-            code=lambda_.Code.from_asset(str(build())),
             memory_size=1024,
             timeout=aws_cdk.Duration.seconds(10),
             log_group=logs.LogGroup(
