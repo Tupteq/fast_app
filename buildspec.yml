@@ -1,4 +1,4 @@
-# CodeBuild spec that deploys FastAppStack.
+# CodeBuild spec that deploys the FastAPI stack for a single domain.
 #
 # Expects the aws/codebuild/standard:8.0 image (or newer, for Node 22) and a service
 # role allowed to assume the CDK bootstrap roles in the target account. The stack's two

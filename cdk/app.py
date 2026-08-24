@@ -6,6 +6,8 @@ Two deploy parameters, both required, both read from the environment:
               Route53 hosted zone for its parent ("example.com") must already exist
               in the target account: the stack creates the DNS-validated ACM
               certificate in it, plus the A alias record pointing at the API.
+              The stack name is derived from it ("ApiExampleCom"), so several
+              domains can be deployed side by side in one account.
 
   TRUSTSTORE  S3 URI of the mTLS truststore, the PEM bundle of CA certificates whose
               clients the API accepts, as "s3://bucket/key" with an optional
@@ -23,6 +25,7 @@ generated execute-api endpoint is disabled, so the custom domain is the only way
 
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import urllib.parse
@@ -100,6 +103,28 @@ def parameter(name: str) -> str:
     if not value:
         raise SystemExit(f"{name} is required; export it before running cdk.")
     return value
+
+
+def stack_id(domain: str) -> str:
+    """Derives the stack name from DOMAIN, keeping one stack per domain in an account.
+
+    Dots and hyphens are dropped and each label capitalised, so api.example.com becomes
+    ApiExampleCom. Capitalising also normalises case, which DNS ignores but
+    CloudFormation does not.
+
+    A leading digit is rejected: hostnames allow one, stack names do not, and there is
+    no name to fall back on now that the mapping is prefix-free.
+
+    Note the two separators become the same boundary, so my-api.example.com and
+    my.api.example.com derive the same name. Nothing here can catch that, since it
+    only shows up across two deploys; keep such a pair out of one account.
+    """
+    label = r"[a-z0-9]+(-[a-z0-9]+)*"
+    if not re.fullmatch(rf"{label}(\.{label})+", domain, re.IGNORECASE):
+        raise SystemExit(f"DOMAIN must be a dotted hostname like api.example.com, got {domain!r}")
+    if not re.match(r"[a-z]", domain, re.IGNORECASE):
+        raise SystemExit(f"DOMAIN must start with a letter, as stack names do, got {domain!r}")
+    return "".join(part.capitalize() for part in re.split(r"[.-]", domain))
 
 
 def mtls_config(scope: constructs.Construct, uri: str) -> apigw.MTLSConfig:
@@ -200,10 +225,12 @@ class FastAppStack(aws_cdk.Stack):
 
 
 app = aws_cdk.App()
+domain = parameter("DOMAIN")
 FastAppStack(
     app,
-    "FastAppStack",
-    domain=parameter("DOMAIN"),
+    stack_id(domain),
+    description=f"FastAPI Lambda behind an mTLS API Gateway for {domain}",
+    domain=domain,
     truststore=parameter("TRUSTSTORE"),
     # HostedZone.from_lookup needs a concrete account and region to query at synth time.
     env=aws_cdk.Environment(
