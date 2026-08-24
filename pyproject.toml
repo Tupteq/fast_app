@@ -1,0 +1,16 @@
+[project]
+name = "fast-app"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "fastapi>=0.141.1",
+    "mangum>=0.22.0",
+]
+
+[dependency-groups]
+dev = [
+    "fastapi[standard-no-fastapi-cloud-cli]>=0.141.1",
+]
+
+[tool.fastapi]
+entrypoint = "fast_app.main:app"

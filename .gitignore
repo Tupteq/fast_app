@@ -1,0 +1,7 @@
+__pycache__/
+*.py[cod]
+.venv/
+build/
+cdk.out/
+.idea/
+CLAUDE.md
