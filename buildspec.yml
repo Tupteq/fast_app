@@ -1,0 +1,53 @@
+# CodeBuild spec that deploys the FastAPI stack for a single domain.
+#
+# Expects the aws/codebuild/standard:8.0 image (or newer, for Node 22) and a service
+# role allowed to assume the CDK bootstrap roles in the target account. The stack's two
+# parameters, DOMAIN and TRUSTSTORE, are read from the environment (see cdk/app.py)
+# and must be set on the CodeBuild project — from Parameter Store or Secrets Manager
+# rather than in plaintext here.
+#
+# CDK_DEFAULT_ACCOUNT and CDK_DEFAULT_REGION, which app.py also needs, are exported
+# by the cdk CLI itself from the resolved credentials, so they are not set below.
+
+version: 0.2
+
+env:
+  variables:
+    # The CDK CLI versions independently of aws-cdk-lib (it is on 2.1000.x), so this
+    # tracks the v2 line rather than the aws-cdk-lib pin in cdk/pyproject.toml.
+    CDK_VERSION: "2"
+    # Keep uv's downloads inside the directories declared under `cache` below.
+    UV_CACHE_DIR: /root/.cache/uv
+    UV_PYTHON_INSTALL_DIR: /root/.local/share/uv/python
+
+phases:
+  install:
+    runtime-versions:
+      nodejs: 22
+    commands:
+      - curl -LsSf https://astral.sh/uv/install.sh | sh
+      - export PATH="$HOME/.local/bin:$PATH"
+      # The image ships an older interpreter; both projects require 3.14, which is
+      # also the Lambda runtime app.py packages against.
+      - uv python install 3.14
+  build:
+    commands:
+      - export PATH="$HOME/.local/bin:$PATH"
+      - cd cdk
+      # cdk.json runs `.venv/bin/python app.py`, so the venv must exist before synth.
+      # --locked fails the build on a stale lock instead of quietly resolving around it.
+      - uv sync --locked
+      # Synth shells out to `uv export --locked` in the repo root to package the
+      # Lambda asset, so the root lockfile must be current too.
+      - npx --yes aws-cdk@$CDK_VERSION deploy --require-approval never
+
+artifacts:
+  # Kept so a given build's synthesized template stays inspectable after the fact.
+  files:
+    - cdk/cdk.out/**/*
+
+cache:
+  paths:
+    - /root/.cache/uv/**/*
+    - /root/.local/share/uv/python/**/*
+    - /root/.npm/**/*
