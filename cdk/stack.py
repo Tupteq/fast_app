@@ -104,6 +104,7 @@ class FastAppStack(aws_cdk.Stack):
         apigw.HttpApi(
             self,
             "HttpApi",
+            description=f"API Gateway {domain}",
             default_integration=apigw_integrations.HttpLambdaIntegration("Integration", function),
             default_domain_mapping=apigw.DomainMappingOptions(domain_name=domain_name),
             # Without this the generated execute-api URL still serves the API without mTLS.
